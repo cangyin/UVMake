@@ -56,22 +56,22 @@ Configure tool for Keil uVsion C51 projects (for Keil C51 version 5)
 
 positional arguments:
   <path-to-config-file>
-                        path of config file, defaults to `uvmake.yaml` at
+                        path of config file, defaults to `uvmake.yaml` in
                         current directory
 
 optional arguments:
   -h, --help            show this help message and exit
   -t, --config-template
-                        generate config template file (file name is taken from
+                        generate template config file (file name is taken from
                         option `<path-to-config-file>`). existing file will be
                         overwritten.
   -r, --reverse-config  update the config file according to project files. if
                         config file doesn't already exist, it is generated
                         from template (see option `-t`) first
   -u, --update-config   same as option `-r`
-  -K, --no-backup       do not backup project files before making update.
-  -d, --debug           run with debug information
-  -v, --version         show version output
+  -K, --no-backup       do not backup project files before making changes.
+  -d, --debug           run with debug output
+  -v, --version         show version information
 
 project specific arguments:
   -S SOURCE [SOURCE ...], --source SOURCE [SOURCE ...]
