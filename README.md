@@ -43,7 +43,7 @@ Which configures every changes you made into the project files (namely, the *.uv
 3. For detailed parameters that `uvmake` is able to configure, see in config file.  
 4. use `uvmake -t` to get a template config file.
 
-    Note: For some reason, some of the comments in config file, which describes purpose of items there, get lost if you update or generate your config file from command `uvmake.py ... -r ...`
+    Note: For some reason, some of the comments in config file, which describe purposes of items there, get lost if you update or generate the config file via commands other than `uvmake.py -t`
 
 # Help Info
 `uvmake.py -h`
