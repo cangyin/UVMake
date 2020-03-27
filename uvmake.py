@@ -2,6 +2,7 @@ import os, sys
 import re
 import logging
 import traceback
+from collections import OrderedDict
 from os import path
 from lxml import etree as et # so painful to type 'etree'
 from ruamel.yaml import YAML
@@ -41,7 +42,7 @@ def shell_interface():
         )
     parser.add_argument(
         '-t', '--config-template',
-        help='generate config template file (file name is taken from option `<path-to-config-file>`). existing file will be overwritten.',
+        help='generate template config file (file name is taken from option `<path-to-config-file>`). existing file will be overwritten.',
         action='store_true'
         )
     parser.add_argument(
@@ -177,17 +178,11 @@ def get_config_template():
             # ALL_BY_FOLDER
             #   files are grouped according to the folder
             #   they're in, regardless of file type.
-            file_grouping_method: NONE    # 'NONE', 'C_BY_FOLDER' or 'ALL_BY_FOLDER'
-            header_group_name: Header Files   # for 'NONE' and 'C_BY_FOLDER'
-            c_group_name: Source Files        # for 'NONE' only
-
-            header_extensions:
-            - .h
-            - .hpp
-
-            c_extensions:
-            - .c
-            - .cpp
+            file_grouping_method:   NONE    # 'NONE', 'C_BY_FOLDER' or 'ALL_BY_FOLDER'
+            
+            header_group_name:      Header Files   # applies to 'NONE' and 'C_BY_FOLDER'
+            c_group_name:           Source Files   # applies to 'NONE' only
+            other_files_group_name: Other Files    # applies to all grouping methods
 
             # exclude some files if its full path
             # contains any keyword specified here.
@@ -304,7 +299,7 @@ def _parse_xml_doc(xml_file):
         for node in doc.xpath('//*[not(text())]'):
             node.text = ''
             
-    logger.info('Parsing project XML file: ' + xml_file)
+    logger.info('Parsing project file: ' + xml_file)
     try:
         doc = et.parse(xml_file)
         __patch_xml(doc)
@@ -378,27 +373,6 @@ def _resolve_uvopt_related_options(root):
         logger.error('Failed on resolving related options in uVision option file!')
         raise
 
-def _get_uvfile_type(file_name :str):
-    uvfile_types = {
-            '.c': 1,
-            '.s*': 2, '.src': 2, '.a*': 2,
-            '.obj': 3, '.o': 3,
-            '.lib': 4,
-            '.txt': 5, '.h': 5, '.inc': 5,
-            '.plm': 6,
-            '.cpp': 7,
-            '.*': 8
-    }
-    for ext in uvfile_types:
-        if('*' in ext): # use regular expression
-            extpattern = ext.replace('*', '.*').replace('.', '\.') + '$'
-            extpattern = re.compile(extpattern)
-            if extpattern.search(file_name):
-                return uvfile_types[ext]
-        else:
-            if file_name.endswith(ext):
-                return uvfile_types[ext]
-
 def _create_SubElement(parent, tag, attrib={}, text=None, nsmap=None, **_extra):
     result = et.SubElement(parent, tag, attrib, nsmap, **_extra)
     result.text = text
@@ -415,7 +389,7 @@ def make_project_xml_groups(file_groups :dict) -> et._Element:
             file_node = _create_SubElement(files_node, 'File')
             file_name = path.split(f)[1]
             _create_SubElement(file_node, 'FileName', text=file_name)
-            _create_SubElement(file_node, 'FileType', text=str(_get_uvfile_type(file_name)))
+            _create_SubElement(file_node, 'FileType', text=str(UvFileType.of(file_name)))
             _create_SubElement(file_node, 'FilePath', text=f)
         return group
 
@@ -441,7 +415,7 @@ def make_uvoption_xml_groups(file_groups :dict) -> list:
             _create_SubElement(file_node, 'GroupNumber', text=str(group_number))
             _create_SubElement(file_node, 'FileNumber', text=str(i+1))
             file_name = path.split(f)[1]
-            _create_SubElement(file_node, 'FileType', text=str(_get_uvfile_type(file_name)))
+            _create_SubElement(file_node, 'FileType', text=str(UvFileType.of(file_name)))
             _create_SubElement(file_node, 'tvExp', text='0')
             _create_SubElement(file_node, 'tvExpOptDlg', text='0')
             _create_SubElement(file_node, 'bDave2', text='0')
@@ -567,7 +541,7 @@ def reverse_config():
         return root.xpath(xp)[0].text
 
     # 1
-    config['SourceDirectories'] = []
+    # config['SourceDirectories'] = [] # when `SourceDirectories` is edited by hand, is't not proper to empty it during reverse configuring 
 
     # gather files in project
     _files = [_node.text for _node in root.xpath('/Project/Targets/Target/Groups//File/FilePath')]
@@ -606,23 +580,75 @@ def reverse_config():
 
     logger.info('Config file updated.')
 
+class UvFileType():
+    _type_map = {
+            '.c': 1,
+            '.s*': 2, '.src': 2, '.a*': 2,
+            '.obj': 3, '.o': 3,
+            '.lib': 4,
+            '.txt': 5, '.h': 5, '.inc': 5,
+            '.plm': 6,
+            '.cpp': 7,
+            '.*': 8
+    }
+
+    HEADER = _type_map['.h']
+    C      = _type_map['.c']
+    CPP    = _type_map['.cpp']
+    LIB    = _type_map['.lib']
+
+    # convenience lambdas
+    is_header  = lambda fn: fn.lower().endswith('.h')
+    is_c       = lambda fn: fn.lower().endswith('.c')
+    is_cpp     = lambda fn: fn.lower().endswith('.cpp')
+    is_library = lambda fn: fn.lower().endswith('.lib')
+
+    @classmethod
+    def of(cls, file_name):
+        file_name = file_name.lower()
+        for ext in cls._type_map:
+            if('*' in ext): # use regular expression
+                extpattern = ext.replace('*', '.*').replace('.', '\.') + '$'
+                extpattern = re.compile(extpattern)
+                if extpattern.search(file_name):
+                    return cls._type_map[ext]
+            else:
+                if file_name.endswith(ext):
+                    return cls._type_map[ext]
+        return None
+
 # `file_grouping_method` implementation base.
 class FileGrouping():
     def __init__(self):
-        self._file_groups = dict()
-        #self.__recent_group = dict()
-
-    @classmethod
-    def is_headerfile(cls, filepath :str):
-        exts = config['uvmake']['header_extensions']
-        return any([filepath.endswith(ext) for ext in exts])
+        self._file_groups = OrderedDict()
+        self._other_group_name = config['uvmake']['other_files_group_name']
+        self._recent_group = ''
 
     def has_gathered(self, filepath :str):
-        for g in self._file_groups:
-             if filepath in self._file_groups[g]:
-                logger.info('Ignored duplicate file: "{}"'.format(filepath))
+        __dup_warning = lambda filepath: logger.info('Ignored duplicate file: "{}"'.format(filepath))
+
+        if len(self._file_groups) <= 3:
+            for g in self._file_groups:
+                if filepath in self._file_groups[g]:
+                    __dup_warning(filepath)
+                    return True
+            return False
+        else:
+            if filepath in self._file_groups[self._recent_group]:
                 return True
-        return False
+
+            keys = [*self._file_groups.keys()]
+            m = keys.index(filepath)
+
+            for i in range(m):
+                if filepath in self._file_groups[keys[i]]:
+                    __dup_warning(filepath)
+                    return True
+            
+            for i in range(m+1, len(keys)):
+                if filepath in self._file_groups[keys[i]]:
+                    __dup_warning(filepath)
+                    return True
 
     def gather(self, filepaths :list):
         for filepath in filepaths:
@@ -638,7 +664,22 @@ class FileGrouping():
         logger.error('Calling un-implemented method!')
         pass
 
+    def to_group(self, group_name, filepath):
+        if not self._file_groups.get(group_name):
+            self._file_groups[group_name] = []
+        self._file_groups[group_name].append(filepath)
+        self._recent_group = group_name
+    
+    def to_other_group(self, filepath :list):
+        if not self._file_groups.get(self._other_group_name):
+            self._file_groups[self._other_group_name] = []
+        self._file_groups[self._other_group_name].append(filepath)
+        self._recent_group = self._other_group_name
+
     def get(self):
+        if self._file_groups.get(self._other_group_name):
+            # how suitable the method is, for this use case!
+            self._file_groups.move_to_end(self._other_group_name, last=True)
         return self._file_groups
 
 # implements file grouping method 'NONE'.
@@ -647,30 +688,29 @@ class FileGroupingNone(FileGrouping):
         super().__init__()
         self.h_group_name = config['uvmake']['header_group_name']
         self.c_group_name = config['uvmake']['c_group_name']
-        self._file_groups[self.h_group_name] = []
-        self._file_groups[self.c_group_name] = []
 
     def gather_it(self, filepath :str):
-        if self.is_headerfile(filepath):
-            self._file_groups[self.h_group_name].append(filepath)
+        if UvFileType.is_header(filepath):
+            self.to_group(self.h_group_name, filepath)
+        elif UvFileType.is_c(filepath):
+            self.to_group(self.c_group_name, filepath)
         else:
-            self._file_groups[self.c_group_name].append(filepath)
-    
+            self.to_other_group(filepath)
+            
 # implements file grouping method 'C_BY_FOLDER'.
 class FileGroupingCByFolder(FileGrouping):
     def __init__(self):
         super().__init__()
         self.h_group_name = config['uvmake']['header_group_name']
-        self._file_groups[self.h_group_name] = []
 
     def gather_it(self, filepath :str):
-        if self.is_headerfile(filepath):
-            self._file_groups[self.h_group_name].append(filepath)
-        else:
+        if UvFileType.is_header(filepath):
+            self.to_group(self.h_group_name, filepath)
+        elif UvFileType.is_c(filepath):
             folder_name = path.split(path.dirname(filepath))[1]
-            if not self._file_groups.get(folder_name):
-                self._file_groups[folder_name] = []
-            self._file_groups[folder_name].append(filepath)
+            self.to_group(folder_name, filepath)
+        else:
+            self.to_other_group(filepath)
 
 # implements file grouping method 'ALL_BY_FOLDER'.
 class FileGroupingAllByFolder(FileGrouping):
@@ -678,34 +718,23 @@ class FileGroupingAllByFolder(FileGrouping):
         super().__init__()
 
     def gather_it(self, filepath :str):
-        folder_name = path.split(path.dirname(filepath))[1]
-        if not self._file_groups.get(folder_name):
-            self._file_groups[folder_name] = []
-        self._file_groups[folder_name].append(filepath)
+        if UvFileType.is_header(filepath) or UvFileType.is_c(filepath):
+            folder_name = path.split(path.dirname(filepath))[1]
+            self.to_group(folder_name, filepath)
+        else:
+            self.to_other_group(filepath)
 
 
 def gather_source_files(dirs :list, more_files :list, grouping :FileGrouping) -> dict:
-    header_exts = config['uvmake']['header_extensions']
-    c_exts = config['uvmake']['c_extensions']
     exclude_keywords = config['uvmake']['exclude_keywords']
     max_dir_tree_level = config['uvmake']['max_dir_tree_level']
 
     def _dir_tree_level(path_str :str) -> int:
         return len(re.split(r'\\+|/+', path_str))
 
-    def _filter_exts(file_list, exts) -> list:
-        # filter files by file extension.
-        return [f for ext in exts for f in file_list if f.endswith(ext)]
-
     def _filter_kws(file_list :list):
         # filter files by keywords.
         return [f for kw in exclude_keywords for f in file_list if not kw in f]
-
-    # def _filter_files(file_list, exts, kws):
-    #     if len(exts) > len(kws):
-    #         return _filter_exts(_filter_kws(file_list, kws), exts)
-    #     else:
-    #         return _filter_kws(_filter_exts(file_list, exts), kws)
 
     for d in dirs:
         d = path.normpath(d)
@@ -716,7 +745,7 @@ def gather_source_files(dirs :list, more_files :list, grouping :FileGrouping) ->
         for dirpath, dirnames, filenames in os.walk(d):
             if _dir_tree_level(dirpath) - base_level > max_dir_tree_level:
                 break
-            filenames = _filter_exts(filenames, header_exts + c_exts)
+            filenames = [f for f in filenames if UvFileType.of(f) is not None]
             filepaths = [path.join(dirpath, filename) for filename in filenames] # combine to full path
             filepaths = _filter_kws(filepaths)
             if not filenames:
@@ -724,6 +753,7 @@ def gather_source_files(dirs :list, more_files :list, grouping :FileGrouping) ->
             logger.debug('Source files found in "{}":'.format(dirpath) + '\n  ' + '\n  '.join(filepaths))
             logger.info('  Files gathered: {}'.format(len(filepaths)))
             grouping.gather(filepaths)
+
     if more_files:
         more_files = [path.normpath(f) for f in more_files if _verify_path(f)]
         grouping.gather(more_files)
@@ -731,17 +761,17 @@ def gather_source_files(dirs :list, more_files :list, grouping :FileGrouping) ->
     file_groups = grouping.get()
 
     # add the paths to header files into 'IncludePaths'
-    _opts = config['ProjectOptions']
-    if not _opts['IncludePaths']:
-        _opts['IncludePaths'] = []
+    propts = config['ProjectOptions']
+    if not propts['IncludePaths']:
+        propts['IncludePaths'] = []
     for g in file_groups:
         for f in file_groups[g]:
-            if grouping.is_headerfile(f):
+            if UvFileType.is_header(f):
                 # make the path relative to project directory
                 f = path.relpath(f, start=config['ProjectDirectory'])
                 f = path.dirname(f)
-                if not f in _opts['IncludePaths']:
-                   _opts['IncludePaths'].append(f)
+                if not f in propts['IncludePaths']:
+                   propts['IncludePaths'].append(f)
 
     return file_groups
 
