@@ -3,6 +3,7 @@ import re
 import logging
 import traceback
 from collections import OrderedDict
+from pathlib import PurePath
 from os import path
 from lxml import etree as et # so painful to type 'etree'
 from ruamel.yaml import YAML
@@ -206,12 +207,14 @@ def make_config_template_file():
     logger.info('Generated template config file: {}'.format(args.config_file))
 
 def load_config():
-    logger.debug('Loading config from file: {}'.format(args.config_file))
     global config
+    logger.debug('Loading config from file: {}'.format(args.config_file))
     try:
-        config = yaml.load(open(args.config_file))
+        with open(args.config_file) as f:
+            config = yaml.load(f)
     except:
         logger.error('Error: cannot load the config file "{}"'.format(args.config_file))
+        logger.debug(traceback.format_exc())
         sys.exit(-1)
     logger.debug('Config loaded successfully')
     #yaml.dump(config, stream=sys.stdout)
@@ -625,6 +628,7 @@ class FileGrouping():
         self._recent_group = ''
 
     def has_gathered(self, filepath :str):
+
         __dup_warning = lambda filepath: logger.info('Ignored duplicate file: "{}"'.format(filepath))
 
         if len(self._file_groups) <= 3:
@@ -638,20 +642,22 @@ class FileGrouping():
                 return True
 
             keys = [*self._file_groups.keys()]
-            m = keys.index(filepath)
+            m = keys.index(self._recent_group)
 
             for i in range(m):
                 if filepath in self._file_groups[keys[i]]:
                     __dup_warning(filepath)
                     return True
             
-            for i in range(m+1, len(keys)):
+            for i in range(m, len(keys)):
                 if filepath in self._file_groups[keys[i]]:
                     __dup_warning(filepath)
                     return True
+            return False
 
     def gather(self, filepaths :list):
         for filepath in filepaths:
+            filepath = PurePath(path.normpath(path.abspath(filepath)))
             if self.has_gathered(filepath):
                 continue
             self.gather_it(filepath)
@@ -680,7 +686,11 @@ class FileGrouping():
         if self._file_groups.get(self._other_group_name):
             # how suitable the method is, for this use case!
             self._file_groups.move_to_end(self._other_group_name, last=True)
-        return self._file_groups
+        _file_groups = self._file_groups
+        # convert PurePath object to str
+        for g in _file_groups:
+            _file_groups[g] = [str(f) for f in _file_groups[g]]
+        return _file_groups
 
 # implements file grouping method 'NONE'.
 class FileGroupingNone(FileGrouping):
@@ -690,9 +700,9 @@ class FileGroupingNone(FileGrouping):
         self.c_group_name = config['uvmake']['c_group_name']
 
     def gather_it(self, filepath :str):
-        if UvFileType.is_header(filepath):
+        if UvFileType.is_header(str(filepath)):
             self.to_group(self.h_group_name, filepath)
-        elif UvFileType.is_c(filepath):
+        elif UvFileType.is_c(str(filepath)):
             self.to_group(self.c_group_name, filepath)
         else:
             self.to_other_group(filepath)
@@ -704,9 +714,9 @@ class FileGroupingCByFolder(FileGrouping):
         self.h_group_name = config['uvmake']['header_group_name']
 
     def gather_it(self, filepath :str):
-        if UvFileType.is_header(filepath):
+        if UvFileType.is_header(str(filepath)):
             self.to_group(self.h_group_name, filepath)
-        elif UvFileType.is_c(filepath):
+        elif UvFileType.is_c(str(filepath)):
             folder_name = path.split(path.dirname(filepath))[1]
             self.to_group(folder_name, filepath)
         else:
@@ -718,7 +728,7 @@ class FileGroupingAllByFolder(FileGrouping):
         super().__init__()
 
     def gather_it(self, filepath :str):
-        if UvFileType.is_header(filepath) or UvFileType.is_c(filepath):
+        if UvFileType.is_header(str(filepath)) or UvFileType.is_c(str(filepath)):
             folder_name = path.split(path.dirname(filepath))[1]
             self.to_group(folder_name, filepath)
         else:
@@ -735,6 +745,9 @@ def gather_source_files(dirs :list, more_files :list, grouping :FileGrouping) ->
     def _filter_kws(file_list :list):
         # filter files by keywords.
         return [f for kw in exclude_keywords for f in file_list if not kw in f]
+
+    if not dirs:
+        dirs = []
 
     for d in dirs:
         d = path.normpath(d)
@@ -766,7 +779,7 @@ def gather_source_files(dirs :list, more_files :list, grouping :FileGrouping) ->
         propts['IncludePaths'] = []
     for g in file_groups:
         for f in file_groups[g]:
-            if UvFileType.is_header(f):
+            if UvFileType.is_header(str(f)):
                 # make the path relative to project directory
                 f = path.relpath(f, start=config['ProjectDirectory'])
                 f = path.dirname(f)
